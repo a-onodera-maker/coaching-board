@@ -72,13 +72,11 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
   int animationSpeedMs = 1500;
   double _baseAngle = 0.0;
   
-  // コートのサイズが確定したかどうかを管理するフラグ
   bool _isLayoutCalculated = false;
 
   @override
   void initState() {
     super.initState();
-    // 最初のダミー位置（あとでコートサイズを元に自動再配置されます）
     _setupDummyPositions();
   }
 
@@ -93,23 +91,17 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     }
   }
 
-  // ★ 改良点：画面サイズ（コートの幅）に合わせて11個のパーツを完璧に等間隔に並べる関数
   void _arrangePiecesToFitScreen(double courtWidth) {
-    // 全11個（白5、ボール1、黒5）のパーツを等間隔に並べるための隙間を計算
-    // 駒のサイズが courtWidth / 15 なので、残りのスペースを10等分します
     final pieceSize = courtWidth / 15;
     final totalAvailableWidth = courtWidth - pieceSize;
     final spacing = totalAvailableWidth / 10;
 
-    // 白チーム (0〜4番目)
     for (int i = 0; i < 5; i++) {
       pieces[i].position = Offset(i * spacing, 10.0);
       pieces[i].angle = 0.0;
     }
-    // ボール (5番目)
     pieces[5].position = Offset(5 * spacing + (pieceSize * 0.25), 10.0 + (pieceSize * 0.25));
     pieces[5].angle = 0.0;
-    // 黒チーム (6〜10番目)
     for (int i = 0; i < 5; i++) {
       pieces[6 + i].position = Offset((6 + i) * spacing, 10.0);
       pieces[6 + i].angle = 0.0;
@@ -197,11 +189,9 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, mainConstraints) {
-            // まず全体のサイズからコートサイズをあらかじめ計算する
-            // 縦のコントローラー部分を除いたエリアで計算
-            final availableHeight = mainConstraints.maxHeight - 60; // ざっくりボタンエリア分を引く
+            final availableHeight = mainConstraints.maxHeight - 60; 
             
-            double courtWidth = mainConstraints.maxWidth - 24; // パディング分
+            double courtWidth = mainConstraints.maxWidth - 24; 
             double courtHeight = courtWidth * (14 / 15);
 
             if (courtHeight > availableHeight) {
@@ -209,7 +199,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
               courtWidth = courtHeight * (15 / 14);
             }
 
-            // ★ アプリ起動直後に、計算されたコート幅を使って一回だけ初期配置を自動整列させる
             if (!_isLayoutCalculated) {
               _arrangePiecesToFitScreen(courtWidth);
               _isLayoutCalculated = true;
@@ -236,11 +225,16 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           for (int i = 1; i <= 5; i++)
                             SizedBox(
                               width: 42,
+                              height: 36, // 👈 縦伸びを絶対に防ぐ高さ固定
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
                                   padding: EdgeInsets.zero,
                                   backgroundColor: currentPhase == i ? Colors.orange : Colors.grey[700],
                                   foregroundColor: Colors.white,
+                                  // 👈 ボタンの形を四角（少し丸角）に固定して縦長化を強制阻止
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
                                 ),
                                 onPressed: isPlaying ? null : () {
                                   setState(() {
@@ -280,7 +274,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                         label: const Text('再生'),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
                       ),
-                      // クリアボタン（完全に初期状態にリセット）
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.red[900]),
                         onPressed: isPlaying ? null : () => _clearAllDataAndReset(courtWidth),
@@ -304,9 +297,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Stack(
-                          clipBehavior: Clip.hardEdge, // コート外はみ出しカット
+                          clipBehavior: Clip.hardEdge, 
                           children: [
-                            // コート背景画像
                             Positioned.fill(
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(6),
@@ -325,7 +317,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                               ),
                             ),
 
-                            // 駒の描画
                             ...pieces.map((piece) {
                               final currentDuration = isPlaying 
                                   ? Duration(milliseconds: animationSpeedMs) 
@@ -349,7 +340,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                                         double nextX = piece.position.dx + details.focalPointDelta.dx;
                                         double nextY = piece.position.dy + details.focalPointDelta.dy;
 
-                                        // コート内からはみ出さないガード
                                         nextX = nextX.clamp(0.0, courtWidth - pieceSize);
                                         nextY = nextY.clamp(0.0, courtHeight - pieceSize);
 
@@ -392,17 +382,14 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     );
   }
 
-  // 駒パーツの描画
   Widget _buildPieceWidget(BoardPiece piece, double size) {
    if (piece.isBall) {
-      // ボールのサイズ自体を「size（車椅子と同じ大きさ）」に変更
       return SizedBox(
         width: size,
         height: size,
         child: Center(
           child: Text(
             '🏀', 
-            // 絵文字のサイズを限界まで大きく（0.85倍）し、見やすく立体的な影をつけました
             style: TextStyle(
               fontSize: size * 0.6,
               shadows: [
