@@ -60712,7 +60712,7 @@ i=new A.bB(B.yE,2,B.I,-1)
 l=A.zt(8)
 k=A.d([A.aej(0,A.acv(A.zt(6),A.adp("assets/court.png",new A.a6v(),B.iU)))],s)
 j=q.d
-B.b.K(k,new A.a0(j,new A.a6w(g,q,r/14),A.Y(j).h("a0<1,h>")))
+B.b.K(k,new A.a0(j,new A.a6w(g,q,r/13.5),A.Y(j).h("a0<1,h>")))
 return A.al3(A.d([p,A.ad7(A.zF(A.Of(A.Ew(B.dC,k,B.a3,B.eZ),h,new A.fh(h,h,new A.cU(i,i,i,i),l,h,h,B.be),m,h,h,n),h,h))],s),B.bv)},
 $S:399}
 A.a6s.prototype={
