@@ -231,7 +231,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
               _isLayoutCalculated = true;
             }
 
-            final pieceSize = courtWidth / 14;
+            final pieceSize = courtWidth / 13.5;
 
             return Column(
               children: [
