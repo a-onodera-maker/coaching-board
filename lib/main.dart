@@ -23,16 +23,16 @@ class WheelchairTacticsApp extends StatelessWidget {
 
 class BoardPiece {
   final String id;
-  final String label;
+  final String label; 
   final Color color;
   final bool isBall;
-  final String imagePath;
+  final String imagePath; 
   Offset position;
   double angle;
 
   BoardPiece({
     required this.id,
-    required this.label,
+    required this.label, // 💡 タイプエラーの原因だった箇所を修正しました
     required this.color,
     this.isBall = false,
     required this.imagePath,
@@ -43,7 +43,7 @@ class BoardPiece {
   BoardPiece clone() {
     return BoardPiece(
       id: id,
-      label: label,
+      label: label, 
       color: color,
       isBall: isBall,
       imagePath: imagePath,
@@ -82,46 +82,73 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
 
   void _setupDummyPositions() {
     pieces.clear();
+    // 共通の白い車椅子画像に、ループで1〜5の文字を自動で割り振ります
     for (int i = 0; i < 5; i++) {
-      pieces.add(BoardPiece(id: 'white_$i', label: '${i + 1}', color: Colors.white, imagePath: 'assets/wheelchair_white.png', position: Offset.zero));
+      pieces.add(BoardPiece(
+        id: 'white_$i', 
+        label: '${i + 1}', 
+        color: Colors.white, 
+        imagePath: 'assets/wheelchair_white.png', 
+        position: Offset.zero
+      ));
     }
-    pieces.add(BoardPiece(id: 'ball', label: '🏀', color: Colors.orange, isBall: true, imagePath: '', position: Offset.zero));
+    // ボール
+    pieces.add(BoardPiece(id: 'ball', label: '', color: Colors.orange, isBall: true, imagePath: '', position: Offset.zero));
+    
+    // 共通の黒い車椅子画像に、ループで1〜5の文字を自動で割り振ります
     for (int i = 0; i < 5; i++) {
-      pieces.add(BoardPiece(id: 'black_$i', label: '${i + 1}', color: Colors.black, imagePath: 'assets/wheelchair_black.png', position: Offset.zero));
+      pieces.add(BoardPiece(
+        id: 'black_$i', 
+        label: '${i + 1}', 
+        color: Colors.black, 
+        imagePath: 'assets/wheelchair_black.png', 
+        position: Offset.zero
+      ));
     }
   }
 
-  void _arrangePiecesToFitScreen(double courtWidth) {
-    final pieceSize = courtWidth / 15;
-    final totalAvailableWidth = courtWidth - pieceSize;
-    final spacing = totalAvailableWidth / 10;
+  // 白線に合わせて左右対称に5等分する関数
+  void _arrangePiecesToFitScreen(double courtWidth, double courtHeight) {
+    final pieceSize = courtWidth / 14;
+    final leftStartX = 15.0; 
+    final lastX = courtWidth - leftStartX - pieceSize;
+    final spacing = (lastX - leftStartX) / 4;
 
     for (int i = 0; i < 5; i++) {
-      pieces[i].position = Offset(i * spacing, 10.0);
+      final xPosition = leftStartX + (i * spacing);
+
+      // 味方5台（白）：上側（コート奥）
+      pieces[i].position = Offset(xPosition, 35.0);
       pieces[i].angle = 0.0;
-    }
-    pieces[5].position = Offset(5 * spacing + (pieceSize * 0.25), 10.0 + (pieceSize * 0.25));
-    pieces[5].angle = 0.0;
-    for (int i = 0; i < 5; i++) {
-      pieces[6 + i].position = Offset((6 + i) * spacing, 10.0);
+
+      // 敵5台（黒）：下側（コート手前）
+      pieces[6 + i].position = Offset(xPosition, courtHeight - pieceSize - 45.0);
       pieces[6 + i].angle = 0.0;
     }
+
+    // ボールの配置
+    final ballSize = pieceSize;
+    final ballX = (courtWidth / 2) - (ballSize / 2); 
+    final ballY = (courtHeight / 2) - (ballSize / 2);
+    
+    pieces[5].position = Offset(ballX, ballY);
+    pieces[5].angle = 0.0;
   }
 
-  void _resetToDefaultPositions(double courtWidth) {
+  void _resetToDefaultPositions(double courtWidth, double courtHeight) {
     setState(() {
       history.clear();
       currentPhase = 1;
       isRecording = false;
       isPlaying = false;
       isInitialPositionSaved = false;
-      _arrangePiecesToFitScreen(courtWidth);
+      _arrangePiecesToFitScreen(courtWidth, courtHeight);
     });
   }
 
-  void _clearAllDataAndReset(double courtWidth) {
+  void _clearAllDataAndReset(double courtWidth, double courtHeight) {
     setState(() {
-      _resetToDefaultPositions(courtWidth);
+      _resetToDefaultPositions(courtWidth, courtHeight);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('🗑️ 全ての保存データを削除し、初期画面にリセットしました')),
       );
@@ -191,24 +218,24 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
           builder: (context, mainConstraints) {
             final availableHeight = mainConstraints.maxHeight - 60; 
             
-            double courtWidth = mainConstraints.maxWidth - 24; 
-            double courtHeight = courtWidth * (14 / 15);
+            double courtWidth = mainConstraints.maxWidth; 
+            double courtHeight = courtWidth;
 
             if (courtHeight > availableHeight) {
               courtHeight = availableHeight;
-              courtWidth = courtHeight * (15 / 14);
+              courtWidth = courtHeight ;
             }
 
             if (!_isLayoutCalculated) {
-              _arrangePiecesToFitScreen(courtWidth);
+              _arrangePiecesToFitScreen(courtWidth, courtHeight);
               _isLayoutCalculated = true;
             }
 
-            final pieceSize = courtWidth / 15;
+            final pieceSize = courtWidth / 14;
 
             return Column(
               children: [
-                // 1. 上部：コントローラーエリア
+                // 1. 上部コントローラー
                 Container(
                   padding: const EdgeInsets.all(8.0),
                   color: Colors.black26,
@@ -225,13 +252,12 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           for (int i = 1; i <= 5; i++)
                             SizedBox(
                               width: 42,
-                              height: 36, // 👈 縦伸びを絶対に防ぐ高さ固定
+                              height: 36, 
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
                                   padding: EdgeInsets.zero,
                                   backgroundColor: currentPhase == i ? Colors.orange : Colors.grey[700],
                                   foregroundColor: Colors.white,
-                                  // 👈 ボタンの形を四角（少し丸角）に固定して縦長化を強制阻止
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(4),
                                   ),
@@ -276,7 +302,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                       ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.red[900]),
-                        onPressed: isPlaying ? null : () => _clearAllDataAndReset(courtWidth),
+                        onPressed: isPlaying ? null : () => _clearAllDataAndReset(courtWidth, courtHeight),
                         icon: const Icon(Icons.delete_forever, size: 18),
                         label: const Text('クリア'),
                       ),
@@ -287,89 +313,84 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                 // 2. メインエリア：ハーフコートと駒
                 Expanded(
                   child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Container(
-                        width: courtWidth,
-                        height: courtHeight,
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white24, width: 2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Stack(
-                          clipBehavior: Clip.hardEdge, 
-                          children: [
-                            Positioned.fill(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: Image.asset(
-                                  'assets/court.png',
-                                  fit: BoxFit.contain, 
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      color: const Color(0xFF1E3A1E),
-                                      child: const Center(
-                                        child: Text('ハーフコート画像が見つかりません', style: TextStyle(color: Colors.grey)),
-                                      ),
-                                    );
-                                  },
-                                ),
+                    child: Container(
+                      width: courtWidth,
+                      height: courtHeight,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24, width: 2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Stack(
+                        clipBehavior: Clip.hardEdge, 
+                        children: [
+                          Positioned.fill(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: Image.asset(
+                                'assets/court.png',
+                                fit: BoxFit.contain, 
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: const Color(0xFF1E3A1E),
+                                    child: const Center(
+                                      child: Text('ハーフコート画像が見つかりません', style: TextStyle(color: Colors.grey)),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
+                          ),
 
-                            ...pieces.map((piece) {
-                              final currentDuration = isPlaying 
-                                  ? Duration(milliseconds: animationSpeedMs) 
-                                  : Duration.zero;
+                          ...pieces.map((piece) {
+                            final currentDuration = isPlaying 
+                                ? Duration(milliseconds: animationSpeedMs) 
+                                : Duration.zero;
 
-                              return AnimatedPositioned(
-                                duration: currentDuration,
-                                curve: Curves.easeInOut,
-                                left: piece.position.dx,
-                                top: piece.position.dy,
-                                child: GestureDetector(
-                                  onScaleStart: (details) {
-                                    _baseAngle = piece.angle;
-                                  },
-                                  onScaleUpdate: (details) {
-                                    if (isPlaying) return;
-                                    setState(() {
-                                      if (details.pointerCount > 1) {
-                                        piece.angle = _baseAngle + details.rotation;
-                                      } else {
-                                        double nextX = piece.position.dx + details.focalPointDelta.dx;
-                                        double nextY = piece.position.dy + details.focalPointDelta.dy;
+                            return AnimatedPositioned(
+                              key: ValueKey(piece.id), 
+                              duration: currentDuration,
+                              curve: Curves.easeInOut,
+                              left: piece.position.dx,
+                              top: piece.position.dy,
+                              child: GestureDetector(
+                                onScaleStart: (details) {
+                                  _baseAngle = piece.angle;
+                                },
+                                onScaleUpdate: (details) {
+                                  if (isPlaying) return;
+                                  setState(() {
+                                    if (details.pointerCount > 1) {
+                                      piece.angle = _baseAngle + details.rotation;
+                                    } else {
+                                      double nextX = piece.position.dx + details.focalPointDelta.dx;
+                                      double nextY = piece.position.dy + details.focalPointDelta.dy;
 
-                                        nextX = nextX.clamp(0.0, courtWidth - pieceSize);
-                                        nextY = nextY.clamp(0.0, courtHeight - pieceSize);
+                                      nextX = nextX.clamp(0.0, courtWidth - pieceSize);
+                                      nextY = nextY.clamp(0.0, courtHeight - pieceSize);
 
-                                        piece.position = Offset(nextX, nextY);
-                                      }
-                                    });
-                                  },
-                                  onScaleEnd: (details) {
+                                      piece.position = Offset(nextX, nextY);
+                                    }
+                                  });
+                                },
+                                onScaleEnd: (details) {
+                                  if (!isRecording && currentPhase == 1 && !isInitialPositionSaved) {
+                                    history[0] = pieces.map((p) => p.clone()).toList();
+                                  }
+                                },
+                                onDoubleTap: () {
+                                  if (isPlaying) return;
+                                  setState(() {
+                                    piece.angle += (math.pi / 4);
                                     if (!isRecording && currentPhase == 1 && !isInitialPositionSaved) {
                                       history[0] = pieces.map((p) => p.clone()).toList();
                                     }
-                                  },
-                                  onDoubleTap: () {
-                                    if (isPlaying) return;
-                                    setState(() {
-                                      piece.angle += (math.pi / 4);
-                                      if (!isRecording && currentPhase == 1 && !isInitialPositionSaved) {
-                                        history[0] = pieces.map((p) => p.clone()).toList();
-                                      }
-                                    });
-                                  },
-                                  child: Transform.rotate(
-                                    angle: piece.angle,
-                                    child: _buildPieceWidget(piece, pieceSize),
-                                  ),
-                                ),
-                              );
-                            }),
-                          ],
-                        ),
+                                  });
+                                },
+                                child: _buildPieceWidget(piece, pieceSize),
+                              ),
+                            );
+                          }),
+                        ],
                       ),
                     ),
                   ),
@@ -383,23 +404,14 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
   }
 
   Widget _buildPieceWidget(BoardPiece piece, double size) {
-   if (piece.isBall) {
+    if (piece.isBall) {
       return SizedBox(
         width: size,
         height: size,
         child: Center(
           child: Text(
             '🏀', 
-            style: TextStyle(
-              fontSize: size * 0.6,
-              shadows: [
-                Shadow(
-                  offset: const Offset(1, 1),
-                  blurRadius: 3.0,
-                  color: Colors.black.withValues(alpha: 0.4),
-                ),
-              ],
-            ),
+            style: TextStyle(fontSize: size * 0.6),
           ),
         ),
       );
@@ -408,39 +420,41 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     final isWhiteTeam = piece.color == Colors.white;
     final numberTextColor = isWhiteTeam ? Colors.black : Colors.white;
 
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        SizedBox(
-          width: size,
-          height: size,
-          child: Image.asset(
-            piece.imagePath,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return Icon(Icons.accessible, color: piece.color, size: size * 0.7);
-            },
-          ),
-        ),
-        Positioned(
-          top: size * 0.3,
-          child: Text(
-            piece.label,
-            style: TextStyle(
-              color: numberTextColor,
-              fontWeight: FontWeight.bold,
-              fontSize: size * 0.32,
-              shadows: [
-                Shadow(
-                  offset: const Offset(1, 1),
-                  blurRadius: 1.5,
-                  color: isWhiteTeam ? Colors.white54 : Colors.black87,
-                ),
-              ],
+    return Transform.rotate(
+      angle: piece.angle,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: size,
+            height: size,
+            child: Image.asset(
+              piece.imagePath,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                return Icon(Icons.accessible, color: piece.color, size: size * 0.7);
+              },
             ),
           ),
-        ),
-      ],
+          Positioned(
+            child: Text(
+              piece.label,
+              style: TextStyle(
+                color: numberTextColor,
+                fontWeight: FontWeight.bold,
+                fontSize: size * 0.35,
+                shadows: [
+                  Shadow(
+                    offset: const Offset(1, 1),
+                    blurRadius: 1.5,
+                    color: isWhiteTeam ? Colors.white54 : Colors.black87,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
