@@ -231,7 +231,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
               _isLayoutCalculated = true;
             }
 
-            final pieceSize = courtWidth / 13.5;
+            final pieceSize = courtWidth / 13;
 
             return Column(
               children: [
@@ -298,7 +298,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                         onPressed: isRecording || !isInitialPositionSaved ? null : _playSimulation,
                         icon: const Icon(Icons.play_arrow, size: 18),
                         label: const Text('再生'),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.yellowAccent),
                       ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.red[900]),
