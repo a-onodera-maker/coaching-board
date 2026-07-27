@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const WheelchairTacticsApp());
@@ -12,6 +14,7 @@ class WheelchairTacticsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '車椅子バスケ 作戦ボード',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         primaryColor: Colors.orange,
         scaffoldBackgroundColor: const Color(0xFF121212),
@@ -25,6 +28,22 @@ class PositionFrame {
   final Offset position;
   final double angle;
   PositionFrame({required this.position, required this.angle});
+
+  Map<String, dynamic> toJson() => {
+        'dx': position.dx,
+        'dy': position.dy,
+        'angle': angle,
+      };
+
+  factory PositionFrame.fromJson(Map<String, dynamic> json) {
+    return PositionFrame(
+      position: Offset(
+        (json['dx'] as num).toDouble(),
+        (json['dy'] as num).toDouble(),
+      ),
+      angle: (json['angle'] as num).toDouble(),
+    );
+  }
 }
 
 class BoardPiece {
@@ -35,10 +54,8 @@ class BoardPiece {
   final String imagePath;
   Offset position;
   double angle;
-  
-  // 各フェーズごとの軌跡データを保持するマップ (キー: phaseId)
+
   Map<int, List<PositionFrame>> phaseTrails = {};
-  // そのフェーズで過去に動かしたことがあるか
   Map<int, bool> isRecordedInPhase = {};
 
   BoardPiece({
@@ -49,19 +66,10 @@ class BoardPiece {
     required this.imagePath,
     required this.position,
     this.angle = 0.0,
-    Map<int, List<PositionFrame>>? phaseTrails,
-    Map<int, bool>? isRecordedInPhase,
-  }) {
-    this.phaseTrails = phaseTrails ?? {};
-    this.isRecordedInPhase = isRecordedInPhase ?? {};
-  }
+  });
 
   BoardPiece clone() {
-    final Map<int, List<PositionFrame>> clonedTrails = {};
-    phaseTrails.forEach((key, value) {
-      clonedTrails[key] = List<PositionFrame>.from(value);
-    });
-    return BoardPiece(
+    final piece = BoardPiece(
       id: id,
       label: label,
       color: color,
@@ -69,9 +77,58 @@ class BoardPiece {
       imagePath: imagePath,
       position: Offset(position.dx, position.dy),
       angle: angle,
-      phaseTrails: clonedTrails,
-      isRecordedInPhase: Map<int, bool>.from(isRecordedInPhase),
     );
+    phaseTrails.forEach((key, value) {
+      piece.phaseTrails[key] = List<PositionFrame>.from(value);
+    });
+    piece.isRecordedInPhase = Map<int, bool>.from(isRecordedInPhase);
+    return piece;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'label': label,
+        'color': color.toARGB32(),
+        'isBall': isBall,
+        'imagePath': imagePath,
+        'dx': position.dx,
+        'dy': position.dy,
+        'angle': angle,
+        'phaseTrails': phaseTrails.map((k, v) =>
+            MapEntry(k.toString(), v.map((e) => e.toJson()).toList())),
+        'isRecordedInPhase':
+            isRecordedInPhase.map((k, v) => MapEntry(k.toString(), v)),
+      };
+
+  factory BoardPiece.fromJson(Map<String, dynamic> json) {
+    final piece = BoardPiece(
+      id: json['id'] as String,
+      label: json['label'] as String,
+      color: Color(json['color'] as int),
+      isBall: json['isBall'] as bool? ?? false,
+      imagePath: json['imagePath'] as String,
+      position: Offset(
+        (json['dx'] as num).toDouble(),
+        (json['dy'] as num).toDouble(),
+      ),
+      angle: (json['angle'] as num).toDouble(),
+    );
+
+    final trailsJson = json['phaseTrails'] as Map<String, dynamic>? ?? {};
+    trailsJson.forEach((key, value) {
+      final list = (value as List)
+          .map((e) => PositionFrame.fromJson(e as Map<String, dynamic>))
+          .toList();
+      piece.phaseTrails[int.parse(key)] = list;
+    });
+
+    final recordedJson =
+        json['isRecordedInPhase'] as Map<String, dynamic>? ?? {};
+    recordedJson.forEach((key, value) {
+      piece.isRecordedInPhase[int.parse(key)] = value as bool;
+    });
+
+    return piece;
   }
 }
 
@@ -85,17 +142,18 @@ class TacticsBoardScreen extends StatefulWidget {
 class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
   List<BoardPiece> pieces = [];
   final Map<int, List<BoardPiece>> history = {};
-  
+
   int currentPhase = 1;
   bool isRecording = false;
   bool isPlaying = false;
   bool isInitialPositionSaved = false;
 
-  int playbackSpeedMs = 20; 
+  int playbackSpeedMs = 20;
   bool _isLayoutCalculated = false;
   bool _isDragging = false;
 
   String? _currentlyActivePieceId;
+  String currentFormationName = '';
 
   @override
   void initState() {
@@ -106,11 +164,27 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
   void _setupDummyPositions() {
     pieces.clear();
     for (int i = 0; i < 5; i++) {
-      pieces.add(BoardPiece(id: 'white_$i', label: '${i + 1}', color: Colors.white, imagePath: 'assets/wheelchair_white.png', position: Offset.zero));
+      pieces.add(BoardPiece(
+          id: 'white_$i',
+          label: '${i + 1}',
+          color: Colors.white,
+          imagePath: 'assets/wheelchair_white.png',
+          position: Offset.zero));
     }
-    pieces.add(BoardPiece(id: 'ball', label: '', color: Colors.orange, isBall: true, imagePath: '', position: Offset.zero));
+    pieces.add(BoardPiece(
+        id: 'ball',
+        label: '',
+        color: Colors.orange,
+        isBall: true,
+        imagePath: '',
+        position: Offset.zero));
     for (int i = 0; i < 5; i++) {
-      pieces.add(BoardPiece(id: 'black_$i', label: '${i + 1}', color: Colors.black, imagePath: 'assets/wheelchair_black.png', position: Offset.zero));
+      pieces.add(BoardPiece(
+          id: 'black_$i',
+          label: '${i + 1}',
+          color: Colors.black,
+          imagePath: 'assets/wheelchair_black.png',
+          position: Offset.zero));
     }
   }
 
@@ -122,15 +196,14 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
 
     for (int i = 0; i < 5; i++) {
       final xPosition = leftStartX + (i * spacing);
-      // 白チーム（元々上向き）
       pieces[i].position = Offset(xPosition, 35.0);
       pieces[i].angle = 0.0;
       pieces[i].phaseTrails.clear();
       pieces[i].isRecordedInPhase.clear();
 
-      // 黒チーム（💡 画像自体が最初から下向きなので、角度は0.0のまま配置します）
-      pieces[6 + i].position = Offset(xPosition, courtHeight - pieceSize - 45.0);
-      pieces[6 + i].angle = 0.0; 
+      pieces[6 + i].position =
+          Offset(xPosition, courtHeight - pieceSize - 45.0);
+      pieces[6 + i].angle = 0.0;
       pieces[6 + i].phaseTrails.clear();
       pieces[6 + i].isRecordedInPhase.clear();
     }
@@ -151,6 +224,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
       isRecording = false;
       isPlaying = false;
       isInitialPositionSaved = false;
+      currentFormationName = '';
       _arrangePiecesToFitScreen(courtWidth, courtHeight);
     });
   }
@@ -159,7 +233,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     setState(() {
       _resetToDefaultPositions(courtWidth, courtHeight);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('🗑️ 全ての保存データを削除し、初期画面にリセットしました')),
+        const SnackBar(content: Text('🗑️ 盤面をリセットしました')),
       );
     });
   }
@@ -180,21 +254,24 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
         if (maxLen == 0) maxLen = 1;
 
         for (var p in pieces) {
-          if (!p.phaseTrails.containsKey(currentPhase) || p.phaseTrails[currentPhase]!.isEmpty) {
-            p.phaseTrails[currentPhase] = List.generate(maxLen, (_) => PositionFrame(position: p.position, angle: p.angle));
+          if (!p.phaseTrails.containsKey(currentPhase) ||
+              p.phaseTrails[currentPhase]!.isEmpty) {
+            p.phaseTrails[currentPhase] = List.generate(maxLen,
+                (_) => PositionFrame(position: p.position, angle: p.angle));
           } else {
             final trail = p.phaseTrails[currentPhase]!;
             final lastFrame = trail.last;
             while (trail.length < maxLen) {
-              trail.add(PositionFrame(position: lastFrame.position, angle: lastFrame.angle));
+              trail.add(PositionFrame(
+                  position: lastFrame.position, angle: lastFrame.angle));
             }
           }
         }
 
         history[currentPhase] = pieces.map((p) => p.clone()).toList();
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('フェーズ $currentPhase に動きを上乗せ記録しました')),
+          SnackBar(content: Text('フェーズ $currentPhase に動きを記録しました')),
         );
       } else {
         if (currentPhase == 1 && !isInitialPositionSaved) {
@@ -247,13 +324,201 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     setState(() => isPlaying = false);
   }
 
+  // --- 本体ストレージへの永久保存機能 ---
+  Future<void> _showSaveDialog() async {
+    if (history.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('保存するデータがありません。先にフェーズを記録してください')),
+      );
+      return;
+    }
+
+    final controller = TextEditingController(text: currentFormationName);
+    final formationName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('フォーメーションの保存'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'フォーメーション名',
+            hintText: '例: 2-1-2 ゾーンアタック',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (formationName != null && formationName.isNotEmpty) {
+      await _saveFormationToStorage(formationName);
+    }
+  }
+
+  Future<void> _saveFormationToStorage(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final Map<String, dynamic> exportData = {
+        'name': name,
+        'isInitialPositionSaved': isInitialPositionSaved,
+        'history': history.map((k, v) =>
+            MapEntry(k.toString(), v.map((p) => p.toJson()).toList())),
+      };
+
+      await prefs.setString('formation_$name', jsonEncode(exportData));
+      
+      // 保存済み名の一覧を更新
+      List<String> savedList = prefs.getStringList('saved_formations_list') ?? [];
+      if (!savedList.contains(name)) {
+        savedList.add(name);
+        await prefs.setStringList('saved_formations_list', savedList);
+      }
+
+      setState(() {
+        currentFormationName = name;
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('💾 「$name」を保存しました')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存エラー: $e')),
+      );
+    }
+  }
+
+  // --- 保存済みフォーメーションの読み込み機能 ---
+  Future<void> _showLoadDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> savedList = prefs.getStringList('saved_formations_list') ?? [];
+
+    if (savedList.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('保存されているフォーメーションがありません')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('フォーメーション一覧'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: savedList.length,
+            itemBuilder: (context, index) {
+              final name = savedList[index];
+              return ListTile(
+                title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  onPressed: () async {
+                    await prefs.remove('formation_$name');
+                    savedList.remove(name);
+                    await prefs.setStringList('saved_formations_list', savedList);
+                    Navigator.pop(context);
+                    _showLoadDialog(); // 再表示
+                  },
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _loadFormationFromStorage(name);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadFormationFromStorage(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonString = prefs.getString('formation_$name');
+      if (jsonString == null) return;
+
+      final decoded = jsonDecode(jsonString) as Map<String, dynamic>;
+      final historyData = decoded['history'] as Map<String, dynamic>;
+
+      setState(() {
+        history.clear();
+        isInitialPositionSaved = decoded['isInitialPositionSaved'] ?? false;
+        currentFormationName = name;
+
+        historyData.forEach((key, value) {
+          final phaseKey = int.parse(key);
+          final pieceList = (value as List)
+              .map((e) => BoardPiece.fromJson(e as Map<String, dynamic>))
+              .toList();
+          history[phaseKey] = pieceList;
+        });
+
+        if (history.containsKey(0)) {
+          pieces = history[0]!.map((p) => p.clone()).toList();
+        } else if (history.containsKey(1)) {
+          pieces = history[1]!.map((p) => p.clone()).toList();
+        }
+        currentPhase = 1;
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('📂 「$name」を読み込みました')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('読み込みエラー: $e')),
+      );
+    }
+  }
+
+  double _normalizeAngle(double angle) {
+    while (angle > math.pi) angle -= 2 * math.pi;
+    while (angle < -math.pi) angle += 2 * math.pi;
+    return angle;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Wheelchair Basketball Tactics Board',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Wheelchair Basketball Tactics Board',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            if (currentFormationName.isNotEmpty)
+              Text(
+                '作戦名: $currentFormationName',
+                style: const TextStyle(fontSize: 12, color: Colors.orangeAccent),
+              ),
+          ],
         ),
       ),
       body: SafeArea(
@@ -278,7 +543,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
             return Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 8.0),
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 6.0, horizontal: 8.0),
                   color: Colors.black26,
                   width: double.infinity,
                   child: Column(
@@ -292,31 +558,42 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           Wrap(
                             spacing: 3.0,
                             children: [
-                              for (int i = 1; i <= 8; i++) 
+                              for (int i = 1; i <= 8; i++)
                                 SizedBox(
                                   width: 34,
                                   height: 34,
                                   child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
                                       padding: EdgeInsets.zero,
-                                      backgroundColor: currentPhase == i ? Colors.orange : Colors.grey[700],
+                                      backgroundColor: currentPhase == i
+                                          ? Colors.orange
+                                          : Colors.grey[700],
                                       foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(4)),
                                     ),
-                                    onPressed: isPlaying ? null : () {
-                                      setState(() {
-                                        currentPhase = i;
-                                        if (history.containsKey(i)) {
-                                          pieces = history[i]!.map((p) => p.clone()).toList();
-                                        } else {
-                                          for (var p in pieces) {
-                                            p.phaseTrails.remove(i);
-                                            p.isRecordedInPhase.remove(i);
-                                          }
-                                        }
-                                      });
-                                    },
-                                    child: Text('$i', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                                    onPressed: isPlaying
+                                        ? null
+                                        : () {
+                                            setState(() {
+                                              currentPhase = i;
+                                              if (history.containsKey(i)) {
+                                                pieces = history[i]!
+                                                    .map((p) => p.clone())
+                                                    .toList();
+                                              } else {
+                                                for (var p in pieces) {
+                                                  p.phaseTrails.remove(i);
+                                                  p.isRecordedInPhase.remove(i);
+                                                }
+                                              }
+                                            });
+                                          },
+                                    child: Text('$i',
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold)),
                                   ),
                                 ),
                             ],
@@ -324,43 +601,83 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           const SizedBox(width: 2),
                           ElevatedButton.icon(
                             onPressed: isPlaying ? null : _toggleRecording,
-                            icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record, size: 16),
-                            label: Text(isRecording ? 'ストップ' : 'フェーズ$currentPhase 記録', style: const TextStyle(fontSize: 12)),
-                            style: ElevatedButton.styleFrom(backgroundColor: isRecording ? Colors.red : Colors.blue, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                            icon: Icon(
+                                isRecording
+                                    ? Icons.stop
+                                    : Icons.fiber_manual_record,
+                                size: 16),
+                            label: Text(
+                                isRecording
+                                    ? 'ストップ'
+                                    : 'フェーズ$currentPhase 記録',
+                                style: const TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor:
+                                    isRecording ? Colors.red : Colors.blue,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8)),
                           ),
                           ElevatedButton.icon(
-                            onPressed: isRecording || !isInitialPositionSaved ? null : _playSimulation,
+                            onPressed: isRecording || !isInitialPositionSaved
+                                ? null
+                                : _playSimulation,
                             icon: const Icon(Icons.play_arrow, size: 16),
-                            label: const Text('再生', style: TextStyle(fontSize: 12)),
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.yellowAccent, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                            label:
+                                const Text('再生', style: TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.yellowAccent,
+                                foregroundColor: Colors.black,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8)),
                           ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       Wrap(
                         alignment: WrapAlignment.center,
-                        spacing: 20.0,
+                        spacing: 12.0,
                         children: [
                           ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(horizontal: 16)),
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('作戦を保存しました')));
-                            },
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14)),
+                            onPressed:
+                                isPlaying || isRecording ? null : _showSaveDialog,
                             icon: const Icon(Icons.save, size: 16),
-                            label: const Text('保存', style: TextStyle(fontSize: 12)),
+                            label:
+                                const Text('名前をつけて保存', style: TextStyle(fontSize: 12)),
                           ),
                           ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[900], padding: const EdgeInsets.symmetric(horizontal: 16)),
-                            onPressed: isPlaying ? null : () => _clearAllDataAndReset(courtWidth, courtHeight),
-                            icon: const Icon(Icons.delete_forever, size: 16),
-                            label: const Text('クリア', style: TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.teal,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14)),
+                            onPressed: isPlaying || isRecording
+                                ? null
+                                : _showLoadDialog,
+                            icon: const Icon(Icons.folder_open, size: 16),
+                            label:
+                                const Text('呼び出し', style: TextStyle(fontSize: 12)),
+                          ),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red[900],
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14)),
+                            onPressed: isPlaying
+                                ? null
+                                : () => _clearAllDataAndReset(
+                                    courtWidth, courtHeight),
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label:
+                                const Text('リセット', style: TextStyle(fontSize: 12)),
                           ),
                         ],
                       ),
                     ],
                   ),
                 ),
-
                 Expanded(
                   child: Center(
                     child: Container(
@@ -382,84 +699,121 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                                 errorBuilder: (context, error, stackTrace) {
                                   return Container(
                                     color: const Color(0xFF1E3A1E),
-                                    child: const Center(child: Text('ハーフコート画像が見つかりません', style: TextStyle(color: Colors.grey))),
+                                    child: const Center(
+                                        child: Text('ハーフコート画像が見つかりません',
+                                            style:
+                                                TextStyle(color: Colors.grey))),
                                   );
                                 },
                               ),
                             ),
                           ),
-
                           ...pieces.map((piece) {
-                            final currentDuration = (_isDragging || isPlaying || isRecording)
-                                ? Duration.zero
-                                : const Duration(milliseconds: 200);
+                            final currentDuration =
+                                (_isDragging || isPlaying || isRecording)
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 200);
 
                             return AnimatedPositioned(
                               key: ValueKey(piece.id),
                               duration: currentDuration,
-                              curve: Curves.linear, 
+                              curve: Curves.linear,
                               left: piece.position.dx,
                               top: piece.position.dy,
                               child: GestureDetector(
-                                onPanStart: isPlaying ? null : (details) {
-                                  setState(() { 
-                                    _isDragging = true;
-                                    if (isRecording) {
-                                      _currentlyActivePieceId = piece.id;
-                                      piece.isRecordedInPhase[currentPhase] = true;
-                                      piece.phaseTrails[currentPhase] = [];
-                                    }
-                                  });
-                                },
-                                // （前後の共通部分はそのまま、 GestureDetector 内の onPanUpdate のみ修正しています）
+                                onPanStart: isPlaying
+                                    ? null
+                                    : (details) {
+                                        setState(() {
+                                          _isDragging = true;
+                                          if (isRecording) {
+                                            _currentlyActivePieceId = piece.id;
+                                            piece.isRecordedInPhase[
+                                                currentPhase] = true;
+                                            piece.phaseTrails[currentPhase] = [];
+                                          }
+                                        });
+                                      },
+                                onPanUpdate: isPlaying
+                                    ? null
+                                    : (details) {
+                                        setState(() {
+                                          final deltaX = details.delta.dx;
+                                          final deltaY = details.delta.dy;
+                                          final moveDistance = math.sqrt(
+                                              deltaX * deltaX +
+                                                  deltaY * deltaY);
 
-                                onPanUpdate: isPlaying ? null : (details) {
-                                  setState(() {
-                                    final deltaX = details.delta.dx;
-                                    final deltaY = details.delta.dy;
+                                          if (piece.isBall) {
+                                            double nextX =
+                                                piece.position.dx + deltaX;
+                                            double nextY =
+                                                piece.position.dy + deltaY;
+                                            nextX = nextX.clamp(
+                                                0.0, courtWidth - pieceSize);
+                                            nextY = nextY.clamp(
+                                                0.0, courtHeight - pieceSize);
+                                            piece.position =
+                                                Offset(nextX, nextY);
+                                          } else {
+                                            if (moveDistance > 1.5) {
+                                              double targetAngle = math.atan2(
+                                                      deltaY, deltaX) -
+                                                  (math.pi / 2);
+                                              if (piece.color == Colors.black) {
+                                                targetAngle += math.pi;
+                                              }
 
-                                    if (piece.isBall) {
-                                      double nextX = piece.position.dx + deltaX;
-                                      double nextY = piece.position.dy + deltaY;
-                                      nextX = nextX.clamp(0.0, courtWidth - pieceSize);
-                                      nextY = nextY.clamp(0.0, courtHeight - pieceSize);
-                                      piece.position = Offset(nextX, nextY);
-                                    } 
-                                    else {
-                                      // 💡 ドラッグで動かした「進行方向」の角度を計算
-                                      if (deltaX.abs() > 0.5 || deltaY.abs() > 0.5) {
-                                        double baseAngle = math.atan2(deltaY, deltaX) - (math.pi / 2);
-                                        
-                                        // 💡 【ここが超重要修正】
-                                        // 黒チームは「最初から下向きの画像」なので、
-                                        // そのまま進めるとバックしてしまうため、角度を180度（math.pi）ひっくり返して前を向かせます。
-                                        if (piece.color == Colors.black) {
-                                          piece.angle = baseAngle + math.pi;
-                                        } else {
-                                          piece.angle = baseAngle;
+                                              double angleDiff =
+                                                  _normalizeAngle(targetAngle -
+                                                      piece.angle);
+
+                                              const double maxRotationPerFrame =
+                                                  0.25;
+                                              angleDiff = angleDiff.clamp(
+                                                  -maxRotationPerFrame,
+                                                  maxRotationPerFrame);
+
+                                              piece.angle = piece.angle +
+                                                  (angleDiff * 0.35);
+                                            }
+
+                                            double nextX =
+                                                piece.position.dx + deltaX;
+                                            double nextY =
+                                                piece.position.dy + deltaY;
+                                            nextX = nextX.clamp(
+                                                0.0, courtWidth - pieceSize);
+                                            nextY = nextY.clamp(
+                                                0.0, courtHeight - pieceSize);
+                                            piece.position =
+                                                Offset(nextX, nextY);
+                                          }
+
+                                          if (isRecording &&
+                                              _currentlyActivePieceId ==
+                                                  piece.id) {
+                                            piece.phaseTrails[currentPhase]!
+                                                .add(PositionFrame(
+                                                    position: piece.position,
+                                                    angle: piece.angle));
+                                          }
+                                        });
+                                      },
+                                onPanEnd: isPlaying
+                                    ? null
+                                    : (details) {
+                                        setState(() {
+                                          _isDragging = false;
+                                        });
+                                        if (!isRecording &&
+                                            currentPhase == 1 &&
+                                            !isInitialPositionSaved) {
+                                          history[0] = pieces
+                                              .map((p) => p.clone())
+                                              .toList();
                                         }
-                                      }
-
-                                      double nextX = piece.position.dx + deltaX;
-                                      double nextY = piece.position.dy + deltaY;
-                                      nextX = nextX.clamp(0.0, courtWidth - pieceSize);
-                                      nextY = nextY.clamp(0.0, courtHeight - pieceSize);
-                                      piece.position = Offset(nextX, nextY);
-                                    }
-
-                                    if (isRecording && _currentlyActivePieceId == piece.id) {
-                                      piece.phaseTrails[currentPhase]!.add(
-                                        PositionFrame(position: piece.position, angle: piece.angle)
-                                      );
-                                    }
-                                  });
-                                },
-                                onPanEnd: isPlaying ? null : (details) {
-                                  setState(() { _isDragging = false; });
-                                  if (!isRecording && currentPhase == 1 && !isInitialPositionSaved) {
-                                    history[0] = pieces.map((p) => p.clone()).toList();
-                                  }
-                                },
+                                      },
                                 child: _buildPieceWidget(piece, pieceSize),
                               ),
                             );
@@ -482,7 +836,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
       return SizedBox(
         width: size,
         height: size,
-        child: Center(child: Text('🏀', style: TextStyle(fontSize: size * 0.6))),
+        child: Center(
+            child: Text('🏀', style: TextStyle(fontSize: size * 0.6))),
       );
     }
     final isWhiteTeam = piece.color == Colors.white;
@@ -500,7 +855,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
               piece.imagePath,
               fit: BoxFit.contain,
               errorBuilder: (context, error, stackTrace) {
-                return Icon(Icons.accessible, color: piece.color, size: size * 0.7);
+                return Icon(Icons.accessible,
+                    color: piece.color, size: size * 0.7);
               },
             ),
           ),
@@ -512,7 +868,10 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                 fontWeight: FontWeight.bold,
                 fontSize: size * 0.35,
                 shadows: [
-                  Shadow(offset: const Offset(1, 1), blurRadius: 1.5, color: isWhiteTeam ? Colors.white54 : Colors.black87),
+                  Shadow(
+                      offset: const Offset(1, 1),
+                      blurRadius: 1.5,
+                      color: isWhiteTeam ? Colors.white54 : Colors.black87),
                 ],
               ),
             ),

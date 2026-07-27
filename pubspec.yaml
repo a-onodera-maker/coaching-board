@@ -10,19 +10,18 @@ environment:
   sdk: ^3.12.0
 
 
-dependencies:
+ddependencies:
   flutter:
     sdk: flutter
-
- 
-  cupertino_icons: ^1.0.8
+  shared_preferences: ^2.2.2  # 👈 これを追加
+cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
  
-  flutter_lints: ^6.0.0
+flutter_lints: ^6.0.0
 
 
 
@@ -33,6 +32,8 @@ flutter:
     - assets/court.png
     - assets/wheelchair_white.png
     - assets/wheelchair_black.png
+dependencies:
+  shared_preferences: ^2.5.5
 
  
   # fonts:
