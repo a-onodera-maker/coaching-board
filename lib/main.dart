@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // クリップボード操作用
+import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:convert';
+import 'dart:io'; // ← GZip圧縮用に追加
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -37,7 +38,7 @@ class Player {
 }
 
 // ---------------------------------------------------------------------------
-// 画面全体を管理するコンテナ (PageView - スワイプ無効化版)
+// 画面全体を管理するコンテナ
 // ---------------------------------------------------------------------------
 class MainContainerScreen extends StatefulWidget {
   const MainContainerScreen({super.key});
@@ -49,7 +50,6 @@ class MainContainerScreen extends StatefulWidget {
 class _MainContainerScreenState extends State<MainContainerScreen> {
   final PageController _pageController = PageController();
 
-  // 登録選手リスト（初期値5人）
   List<Player> registeredPlayers = [
     Player(number: '4', name: '選手A', isSelected: true),
     Player(number: '5', name: '選手B', isSelected: true),
@@ -58,14 +58,12 @@ class _MainContainerScreenState extends State<MainContainerScreen> {
     Player(number: '8', name: '選手E', isSelected: true),
   ];
 
-  // 選択されている白チーム5人の背番号リストを取得
   List<String> get selectedWhiteNumbers {
     final selected = registeredPlayers
         .where((p) => p.isSelected)
         .map((p) => p.number)
         .toList();
 
-    // 5人に満たない場合は足らない分を「?」で補填
     while (selected.length < 5) {
       selected.add('${selected.length + 1}');
     }
@@ -77,10 +75,8 @@ class _MainContainerScreenState extends State<MainContainerScreen> {
     return Scaffold(
       body: PageView(
         controller: _pageController,
-        // スワイプ操作を無効化（ボタンでのみ画面移動）
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          // ページ 1: 作戦ボード画面
           TacticsBoardScreen(
             whiteNumbers: selectedWhiteNumbers,
             onOpenRosterPage: () {
@@ -91,12 +87,10 @@ class _MainContainerScreenState extends State<MainContainerScreen> {
               );
             },
           ),
-
-          // ページ 2: 選手登録＆5人選択画面
           PlayerRosterScreen(
             players: registeredPlayers,
             onPlayersChanged: () {
-              setState(() {}); // 白チームの番号更新を全体に伝える
+              setState(() {});
             },
             onBackToBoardPage: () {
               _pageController.animateToPage(
@@ -281,7 +275,8 @@ class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
                   onPressed: widget.onBackToBoardPage,
                   icon: const Icon(Icons.arrow_back),
                   label: const Text('作戦ボードへ戻る',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                      style: TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -301,9 +296,9 @@ class PositionFrame {
   PositionFrame({required this.position, required this.angle});
 
   Map<String, dynamic> toJson() => {
-        'x': position.dx,
-        'y': position.dy,
-        'a': angle,
+        'x': double.parse(position.dx.toStringAsFixed(1)), // 小数点第1位に丸めて軽量化
+        'y': double.parse(position.dy.toStringAsFixed(1)),
+        'a': double.parse(angle.toStringAsFixed(2)),
       };
 
   factory PositionFrame.fromJson(Map<String, dynamic> json) {
@@ -363,9 +358,9 @@ class BoardPiece {
       'color': color.toARGB32(),
       'isBall': isBall,
       'imagePath': imagePath,
-      'x': position.dx,
-      'y': position.dy,
-      'angle': angle,
+      'x': double.parse(position.dx.toStringAsFixed(1)),
+      'y': double.parse(position.dy.toStringAsFixed(1)),
+      'angle': double.parse(angle.toStringAsFixed(2)),
       'phaseTrails': phaseTrails.map((k, v) =>
           MapEntry(k.toString(), v.map((e) => e.toJson()).toList())),
     };
@@ -733,7 +728,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           IconButton(
                             icon: const Icon(Icons.share,
                                 color: Colors.greenAccent),
-                            tooltip: 'LINE用コードをコピー',
+                            tooltip: 'LINE用圧縮コードをコピー',
                             onPressed: () => _exportFormationToClipboard(name),
                           ),
                           IconButton(
@@ -768,19 +763,28 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     );
   }
 
+  // ★ GZip圧縮を挟むことで文字列長を激減させてLINEフリーズを回避★
   Future<void> _exportFormationToClipboard(String name) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final jsonString = prefs.getString('formation_$name');
       if (jsonString == null) return;
 
-      final base64Code = base64UrlEncode(utf8.encode(jsonString));
+      // 1. JSON文字列をバイト配列に変換
+      List<int> stringBytes = utf8.encode(jsonString);
+
+      // 2. GZipで大幅圧縮
+      List<int> gzippedBytes = gzip.encode(stringBytes);
+
+      // 3. 圧縮後のバイナリをBase64テキストに変換
+      final base64Code = base64UrlEncode(gzippedBytes);
+
       await Clipboard.setData(ClipboardData(text: base64Code));
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('📋 「$name」の共有コードをコピーしました！'),
+          content: Text('📋 「$name」の圧縮コードをコピーしました！（LINEフリーズ防止済）'),
           duration: const Duration(seconds: 4),
         ),
       );
@@ -837,15 +841,27 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     );
   }
 
+  // ★ GZip解凍（旧方式の非圧縮データが来ても自動対応）★
   Future<void> _importFormationFromCode(String code) async {
     try {
       final cleanCode = code.trim();
       String decodedJsonString = "";
 
       if (cleanCode.startsWith('{')) {
+        // 生JSONの場合
         decodedJsonString = cleanCode;
       } else {
-        decodedJsonString = utf8.decode(base64Url.decode(cleanCode));
+        // Base64デコード
+        List<int> decodedBytes = base64Url.decode(cleanCode);
+
+        try {
+          // GZip解凍を試みる
+          List<int> decompressedBytes = gzip.decode(decodedBytes);
+          decodedJsonString = utf8.decode(decompressedBytes);
+        } catch (_) {
+          // 解凍に失敗した場合は旧方式（非圧縮Base64）として処理
+          decodedJsonString = utf8.decode(decodedBytes);
+        }
       }
 
       final decoded = jsonDecode(decodedJsonString) as Map<String, dynamic>;
