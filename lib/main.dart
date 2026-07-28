@@ -37,7 +37,7 @@ class Player {
 }
 
 // ---------------------------------------------------------------------------
-// 画面全体をスライド管理するコンテナ (PageView)
+// 画面全体を管理するコンテナ (PageView - スワイプ無効化版)
 // ---------------------------------------------------------------------------
 class MainContainerScreen extends StatefulWidget {
   const MainContainerScreen({super.key});
@@ -77,6 +77,8 @@ class _MainContainerScreenState extends State<MainContainerScreen> {
     return Scaffold(
       body: PageView(
         controller: _pageController,
+        // スワイプ操作を無効化（ボタンでのみ画面移動）
+        physics: const NeverScrollableScrollPhysics(),
         children: [
           // ページ 1: 作戦ボード画面
           TacticsBoardScreen(
@@ -142,6 +144,7 @@ class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
         title: const Text('白チーム 選手管理 / 5人選択'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
+          tooltip: '作戦ボードへ戻る',
           onPressed: widget.onBackToBoardPage,
         ),
       ),
@@ -151,7 +154,6 @@ class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. 新規選手追加フォーム
               const Text('新規選手追加',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
@@ -205,8 +207,6 @@ class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
                 ],
               ),
               const Divider(height: 32),
-
-              // 2. 出場メンバー選択ヘッダー
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -224,8 +224,6 @@ class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
                 ],
               ),
               const SizedBox(height: 8),
-
-              // 3. 選手一覧リスト
               Expanded(
                 child: ListView.builder(
                   itemCount: widget.players.length,
@@ -272,14 +270,18 @@ class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
                   },
                 ),
               ),
-
-              // 左へ戻る誘導
               Center(
-                child: TextButton.icon(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[800],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                  ),
                   onPressed: widget.onBackToBoardPage,
-                  icon: const Icon(Icons.arrow_back, color: Colors.grey),
-                  label: const Text('← 左スライドで作戦ボードへ戻る',
-                      style: TextStyle(color: Colors.grey)),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('作戦ボードへ戻る',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -299,18 +301,18 @@ class PositionFrame {
   PositionFrame({required this.position, required this.angle});
 
   Map<String, dynamic> toJson() => {
-        'dx': position.dx,
-        'dy': position.dy,
-        'angle': angle,
+        'x': position.dx,
+        'y': position.dy,
+        'a': angle,
       };
 
   factory PositionFrame.fromJson(Map<String, dynamic> json) {
     return PositionFrame(
       position: Offset(
-        (json['dx'] as num).toDouble(),
-        (json['dy'] as num).toDouble(),
+        (json['x'] as num).toDouble(),
+        (json['y'] as num).toDouble(),
       ),
-      angle: (json['angle'] as num).toDouble(),
+      angle: (json['a'] as num).toDouble(),
     );
   }
 }
@@ -354,20 +356,20 @@ class BoardPiece {
     return piece;
   }
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'label': label,
-        'color': color.toARGB32(),
-        'isBall': isBall,
-        'imagePath': imagePath,
-        'dx': position.dx,
-        'dy': position.dy,
-        'angle': angle,
-        'phaseTrails': phaseTrails.map((k, v) =>
-            MapEntry(k.toString(), v.map((e) => e.toJson()).toList())),
-        'isRecordedInPhase':
-            isRecordedInPhase.map((k, v) => MapEntry(k.toString(), v)),
-      };
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'label': label,
+      'color': color.toARGB32(),
+      'isBall': isBall,
+      'imagePath': imagePath,
+      'x': position.dx,
+      'y': position.dy,
+      'angle': angle,
+      'phaseTrails': phaseTrails.map((k, v) =>
+          MapEntry(k.toString(), v.map((e) => e.toJson()).toList())),
+    };
+  }
 
   factory BoardPiece.fromJson(Map<String, dynamic> json) {
     final piece = BoardPiece(
@@ -377,8 +379,8 @@ class BoardPiece {
       isBall: json['isBall'] as bool? ?? false,
       imagePath: json['imagePath'] as String,
       position: Offset(
-        (json['dx'] as num).toDouble(),
-        (json['dy'] as num).toDouble(),
+        (json['x'] as num).toDouble(),
+        (json['y'] as num).toDouble(),
       ),
       angle: (json['angle'] as num).toDouble(),
     );
@@ -389,12 +391,6 @@ class BoardPiece {
           .map((e) => PositionFrame.fromJson(e as Map<String, dynamic>))
           .toList();
       piece.phaseTrails[int.parse(key)] = list;
-    });
-
-    final recordedJson =
-        json['isRecordedInPhase'] as Map<String, dynamic>? ?? {};
-    recordedJson.forEach((key, value) {
-      piece.isRecordedInPhase[int.parse(key)] = value as bool;
     });
 
     return piece;
@@ -440,7 +436,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
   @override
   void didUpdateWidget(covariant TacticsBoardScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 選択された白チームの背番号が変わったらコマに反映
     _applyWhiteNumbers();
   }
 
@@ -452,19 +447,28 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     }
   }
 
+  void _applySelectedWhiteNumbersIfAvailable() {
+    if (widget.whiteNumbers.length == 5) {
+      for (int i = 0; i < 5; i++) {
+        if (i < pieces.length) {
+          pieces[i].label = widget.whiteNumbers[i];
+        }
+      }
+    }
+  }
+
   void _setupDummyPositions() {
     pieces.clear();
-    // 白チーム (0〜4番目)
     for (int i = 0; i < 5; i++) {
       pieces.add(BoardPiece(
           id: 'white_$i',
-          label:
-              i < widget.whiteNumbers.length ? widget.whiteNumbers[i] : '${i + 1}',
+          label: i < widget.whiteNumbers.length
+              ? widget.whiteNumbers[i]
+              : '${i + 1}',
           color: Colors.white,
           imagePath: 'assets/wheelchair_white.png',
           position: Offset.zero));
     }
-    // ボール (5番目)
     pieces.add(BoardPiece(
         id: 'ball',
         label: '',
@@ -472,7 +476,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
         isBall: true,
         imagePath: '',
         position: Offset.zero));
-    // 黒チーム (6〜10番目)
     for (int i = 0; i < 5; i++) {
       pieces.add(BoardPiece(
           id: 'black_$i',
@@ -584,18 +587,14 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     if (!isInitialPositionSaved || history.isEmpty) return;
     setState(() => isPlaying = true);
 
-    // 1. 初期位置データ（Phase 0）を読み込む
     if (history.containsKey(0)) {
       setState(() {
         pieces = history[0]!.map((p) => p.clone()).toList();
-        
-        // ★【追加】現在チェックボックスで選択中の5人がいれば、再生時の背番号を上書きする
         _applySelectedWhiteNumbersIfAvailable();
       });
       await Future.delayed(const Duration(milliseconds: 300));
     }
 
-    // 2. 各フェーズの再生アニメーション
     for (int phase = 1; phase <= 8; phase++) {
       if (history.containsKey(phase)) {
         if (!mounted) return;
@@ -615,7 +614,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                 pieces[i].angle = trail[step].angle;
               }
             }
-            // ★【追加】再生中の各ステップでも白チームの背番号を維持する
             _applySelectedWhiteNumbersIfAvailable();
           });
           await Future.delayed(Duration(milliseconds: playbackSpeedMs));
@@ -628,19 +626,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     setState(() => isPlaying = false);
   }
 
-  // ★【追加】チェックされた選手が5人いる場合のみ、白チームのコマの番号を選択中の番号に差し替えるヘルパー
-  void _applySelectedWhiteNumbersIfAvailable() {
-    // もし親から渡された widget.whiteNumbers が有効なデータ（5人分）であれば上書き
-    if (widget.whiteNumbers.length == 5) {
-      for (int i = 0; i < 5; i++) {
-        if (i < pieces.length) {
-          pieces[i].label = widget.whiteNumbers[i];
-        }
-      }
-    }
-  }
-
-  // ストレージ保存
+  // --- 保存処理 ---
   Future<void> _showSaveDialog() async {
     if (history.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -686,8 +672,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
       final Map<String, dynamic> exportData = {
         'name': name,
         'isInitialPositionSaved': isInitialPositionSaved,
-        'history': history.map((k, v) =>
-            MapEntry(k.toString(), v.map((p) => p.toJson()).toList())),
+        'history': history.map((k, v) => MapEntry(
+            k.toString(), v.map((p) => p.toJson()).toList())),
       };
 
       await prefs.setString('formation_$name', jsonEncode(exportData));
@@ -715,7 +701,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     }
   }
 
-  // 呼び出し＆共有一覧
+  // --- 一覧・共有 ---
   Future<void> _showLoadDialog() async {
     final prefs = await SharedPreferences.getInstance();
     List<String> savedList =
@@ -747,7 +733,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                           IconButton(
                             icon: const Icon(Icons.share,
                                 color: Colors.greenAccent),
-                            tooltip: 'LINE用にコードをコピー',
+                            tooltip: 'LINE用コードをコピー',
                             onPressed: () => _exportFormationToClipboard(name),
                           ),
                           IconButton(
@@ -788,13 +774,13 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
       final jsonString = prefs.getString('formation_$name');
       if (jsonString == null) return;
 
-      final base64Code = base64Encode(utf8.encode(jsonString));
+      final base64Code = base64UrlEncode(utf8.encode(jsonString));
       await Clipboard.setData(ClipboardData(text: base64Code));
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('📋 「$name」の共有コードをコピーしました！LINEに貼り付けて送ってください'),
+          content: Text('📋 「$name」の共有コードをコピーしました！'),
           duration: const Duration(seconds: 4),
         ),
       );
@@ -806,18 +792,18 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     }
   }
 
-  // LINE取込
+  // --- LINE・Webからの取込 ---
   Future<void> _showImportDialog() async {
     final controller = TextEditingController();
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('LINEから作戦を取り込む'),
+        title: const Text('LINE等から作戦を取り込む'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'LINE等で送られてきた共有コードを下に貼り付けて「取り込む」を押してください。',
+              '送られてきた共有コードを下に貼り付けて「取り込む」を押してください。',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 12),
@@ -853,7 +839,15 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
 
   Future<void> _importFormationFromCode(String code) async {
     try {
-      final decodedJsonString = utf8.decode(base64Decode(code));
+      final cleanCode = code.trim();
+      String decodedJsonString = "";
+
+      if (cleanCode.startsWith('{')) {
+        decodedJsonString = cleanCode;
+      } else {
+        decodedJsonString = utf8.decode(base64Url.decode(cleanCode));
+      }
+
       final decoded = jsonDecode(decodedJsonString) as Map<String, dynamic>;
 
       final String name = decoded['name'] ?? '取り込み作戦';
@@ -877,7 +871,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
 
       setState(() {
         history.clear();
-        isInitialPositionSaved = decoded['isInitialPositionSaved'] ?? false;
+        isInitialPositionSaved = decoded['isInitialPositionSaved'] == true;
         currentFormationName = finalName;
 
         historyData.forEach((key, value) {
@@ -894,11 +888,13 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
           pieces = history[1]!.map((p) => p.clone()).toList();
         }
         currentPhase = 1;
+        isPlaying = false;
+        _applySelectedWhiteNumbersIfAvailable();
       });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('📥 「$finalName」を取り込んで表示しました！')),
+        SnackBar(content: Text('📥 「$finalName」を取り込みました。「再生」ボタンで再生できます')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -919,7 +915,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
 
       setState(() {
         history.clear();
-        isInitialPositionSaved = decoded['isInitialPositionSaved'] ?? false;
+        isInitialPositionSaved = decoded['isInitialPositionSaved'] == true;
         currentFormationName = name;
 
         historyData.forEach((key, value) {
@@ -936,11 +932,13 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
           pieces = history[1]!.map((p) => p.clone()).toList();
         }
         currentPhase = 1;
+        isPlaying = false;
+        _applySelectedWhiteNumbersIfAvailable();
       });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('📂 「$name」を読み込みました')),
+        SnackBar(content: Text('📂 「$name」を読み込みました。「再生」ボタンで再生できます')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -976,7 +974,6 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
           ],
         ),
         actions: [
-          // 選手登録画面への移動ボタン
           IconButton(
             icon: const Icon(Icons.people, color: Colors.orangeAccent),
             tooltip: '選手管理 / 出場5人選択',
@@ -1317,8 +1314,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
             child: Text('🏀', style: TextStyle(fontSize: size * 0.6))),
       );
     }
-    final isWhiteTeam = piece.color == Colors.white;
-    final numberTextColor = isWhiteTeam ? Colors.black : Colors.white;
+    final isWhite = piece.color == Colors.white;
+    final numberTextColor = isWhite ? Colors.black : Colors.white;
 
     return Transform.rotate(
       angle: piece.angle,
@@ -1348,7 +1345,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                   Shadow(
                       offset: const Offset(1, 1),
                       blurRadius: 1.5,
-                      color: isWhiteTeam ? Colors.white54 : Colors.black87),
+                      color: isWhite ? Colors.white54 : Colors.black87),
                 ],
               ),
             ),
