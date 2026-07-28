@@ -34,6 +34,7 @@ flutter:
     - assets/wheelchair_black.png
 dependencies:
   shared_preferences: ^2.5.5
+  universal_html: ^2.3.0
 
  
   # fonts:

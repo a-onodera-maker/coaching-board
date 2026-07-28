@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'; // kIsWeb check
 import 'dart:math' as math;
 import 'dart:convert';
-import 'dart:io'; // ← GZip圧縮用に追加
+import 'package:universal_html/html.dart' as html; // Browser File I/O
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -296,7 +297,7 @@ class PositionFrame {
   PositionFrame({required this.position, required this.angle});
 
   Map<String, dynamic> toJson() => {
-        'x': double.parse(position.dx.toStringAsFixed(1)), // 小数点第1位に丸めて軽量化
+        'x': double.parse(position.dx.toStringAsFixed(1)),
         'y': double.parse(position.dy.toStringAsFixed(1)),
         'a': double.parse(angle.toStringAsFixed(2)),
       };
@@ -696,7 +697,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     }
   }
 
-  // --- 一覧・共有 ---
+  // --- 一覧・ダウンロード ---
   Future<void> _showLoadDialog() async {
     final prefs = await SharedPreferences.getInstance();
     List<String> savedList =
@@ -726,10 +727,10 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.share,
+                            icon: const Icon(Icons.download,
                                 color: Colors.greenAccent),
-                            tooltip: 'LINE用圧縮コードをコピー',
-                            onPressed: () => _exportFormationToClipboard(name),
+                            tooltip: 'JSONファイルをダウンロード',
+                            onPressed: () => _exportFormationAsJsonFile(name),
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete_outline,
@@ -763,61 +764,59 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     );
   }
 
-  // ★ GZip圧縮を挟むことで文字列長を激減させてLINEフリーズを回避★
-  Future<void> _exportFormationToClipboard(String name) async {
+  // Web用 JSONファイル直接ダウンロード機能
+  Future<void> _exportFormationAsJsonFile(String name) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final jsonString = prefs.getString('formation_$name');
       if (jsonString == null) return;
 
-      // 1. JSON文字列をバイト配列に変換
-      List<int> stringBytes = utf8.encode(jsonString);
+      if (kIsWeb) {
+        final bytes = utf8.encode(jsonString);
+        final blob = html.Blob([bytes], 'application/json');
+        final url = html.Url.createObjectUrlFromBlob(blob);
 
-      // 2. GZipで大幅圧縮
-      List<int> gzippedBytes = gzip.encode(stringBytes);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute("download", "$name.json")
+          ..click();
 
-      // 3. 圧縮後のバイナリをBase64テキストに変換
-      final base64Code = base64UrlEncode(gzippedBytes);
+        html.Url.revokeObjectUrl(url);
 
-      await Clipboard.setData(ClipboardData(text: base64Code));
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('📋 「$name」の圧縮コードをコピーしました！（LINEフリーズ防止済）'),
-          duration: const Duration(seconds: 4),
-        ),
-      );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('📄 「$name.json」をダウンロードしました！')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Webブラウザで実行してください')),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('共有エラー: $e')),
+        SnackBar(content: Text('出力エラー: $e')),
       );
     }
   }
 
-  // --- LINE・Webからの取込 ---
+  // --- Web用 ファイルピーカーによる.jsonファイル取込 ---
   Future<void> _showImportDialog() async {
-    final controller = TextEditingController();
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('LINE等から作戦を取り込む'),
-        content: Column(
+        title: const Text('作戦ファイルの取り込み'),
+        content: const Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '送られてきた共有コードを下に貼り付けて「取り込む」を押してください。',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+            Text(
+              '送られてきた作戦ファイル（.json）を選択して取り込みます。',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'ここにコードを貼り付け...',
-              ),
+            SizedBox(height: 12),
+            Text(
+              '※あらかじめ届いたファイルをスマホやPCに保存（ダウンロード）しておいてください。',
+              style: TextStyle(fontSize: 12, color: Colors.orangeAccent),
             ),
           ],
         ),
@@ -826,46 +825,53 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
             onPressed: () => Navigator.pop(context),
             child: const Text('キャンセル'),
           ),
-          ElevatedButton(
-            onPressed: () async {
-              final text = controller.text.trim();
-              if (text.isNotEmpty) {
-                Navigator.pop(context);
-                await _importFormationFromCode(text);
-              }
+          ElevatedButton.icon(
+            icon: const Icon(Icons.folder_open),
+            label: const Text('ファイルを選択'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+            onPressed: () {
+              Navigator.pop(context);
+              _pickAndImportJsonFile();
             },
-            child: const Text('取り込む'),
           ),
         ],
       ),
     );
   }
 
-  // ★ GZip解凍（旧方式の非圧縮データが来ても自動対応）★
-  Future<void> _importFormationFromCode(String code) async {
+  void _pickAndImportJsonFile() {
+    if (kIsWeb) {
+      final uploadInput = html.FileUploadInputElement()..accept = '.json';
+      uploadInput.click();
+
+      uploadInput.onChange.listen((e) {
+        final files = uploadInput.files;
+        if (files == null || files.isEmpty) return;
+
+        final file = files[0];
+        final reader = html.FileReader();
+
+        reader.onLoadEnd.listen((e) {
+          try {
+            final String content = reader.result as String;
+            final Map<String, dynamic> decoded = jsonDecode(content);
+            _applyImportedData(decoded);
+          } catch (err) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                  content: Text('⚠️ ファイルの読み込みに失敗しました。正しい作戦ファイルか確認してください。')),
+            );
+          }
+        });
+
+        reader.readAsText(file);
+      });
+    }
+  }
+
+  Future<void> _applyImportedData(Map<String, dynamic> decoded) async {
     try {
-      final cleanCode = code.trim();
-      String decodedJsonString = "";
-
-      if (cleanCode.startsWith('{')) {
-        // 生JSONの場合
-        decodedJsonString = cleanCode;
-      } else {
-        // Base64デコード
-        List<int> decodedBytes = base64Url.decode(cleanCode);
-
-        try {
-          // GZip解凍を試みる
-          List<int> decompressedBytes = gzip.decode(decodedBytes);
-          decodedJsonString = utf8.decode(decompressedBytes);
-        } catch (_) {
-          // 解凍に失敗した場合は旧方式（非圧縮Base64）として処理
-          decodedJsonString = utf8.decode(decodedBytes);
-        }
-      }
-
-      final decoded = jsonDecode(decodedJsonString) as Map<String, dynamic>;
-
       final String name = decoded['name'] ?? '取り込み作戦';
       final historyData = decoded['history'] as Map<String, dynamic>;
 
@@ -910,12 +916,12 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('📥 「$finalName」を取り込みました。「再生」ボタンで再生できます')),
+        SnackBar(content: Text('📥 「$finalName」を取り込みました！「再生」ボタンで動かせます')),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('⚠️ コードが無効か、取り込みに失敗しました')),
+        SnackBar(content: Text('データ反映エラー: $e')),
       );
     }
   }
@@ -1135,7 +1141,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                                 ? null
                                 : _showLoadDialog,
                             icon: const Icon(Icons.folder_open, size: 16),
-                            label: const Text('一覧/共有',
+                            label: const Text('一覧/ダウンロード',
                                 style: TextStyle(fontSize: 12)),
                           ),
                           ElevatedButton.icon(
@@ -1147,7 +1153,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                                 ? null
                                 : _showImportDialog,
                             icon: const Icon(Icons.input, size: 16),
-                            label: const Text('LINEから取込',
+                            label: const Text('ファイル取込',
                                 style: TextStyle(fontSize: 12)),
                           ),
                           ElevatedButton.icon(
