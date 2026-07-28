@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // クリップボード操作用
 import 'dart:math' as math;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,11 +20,279 @@ class WheelchairTacticsApp extends StatelessWidget {
         primaryColor: Colors.orange,
         scaffoldBackgroundColor: const Color(0xFF121212),
       ),
-      home: const TacticsBoardScreen(),
+      home: const MainContainerScreen(),
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+// 選手データモデル
+// ---------------------------------------------------------------------------
+class Player {
+  String number;
+  String name;
+  bool isSelected;
+
+  Player({required this.number, required this.name, this.isSelected = false});
+}
+
+// ---------------------------------------------------------------------------
+// 画面全体をスライド管理するコンテナ (PageView)
+// ---------------------------------------------------------------------------
+class MainContainerScreen extends StatefulWidget {
+  const MainContainerScreen({super.key});
+
+  @override
+  State<MainContainerScreen> createState() => _MainContainerScreenState();
+}
+
+class _MainContainerScreenState extends State<MainContainerScreen> {
+  final PageController _pageController = PageController();
+
+  // 登録選手リスト（初期値5人）
+  List<Player> registeredPlayers = [
+    Player(number: '4', name: '選手A', isSelected: true),
+    Player(number: '5', name: '選手B', isSelected: true),
+    Player(number: '6', name: '選手C', isSelected: true),
+    Player(number: '7', name: '選手D', isSelected: true),
+    Player(number: '8', name: '選手E', isSelected: true),
+  ];
+
+  // 選択されている白チーム5人の背番号リストを取得
+  List<String> get selectedWhiteNumbers {
+    final selected = registeredPlayers
+        .where((p) => p.isSelected)
+        .map((p) => p.number)
+        .toList();
+
+    // 5人に満たない場合は足らない分を「?」で補填
+    while (selected.length < 5) {
+      selected.add('${selected.length + 1}');
+    }
+    return selected.take(5).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: PageView(
+        controller: _pageController,
+        children: [
+          // ページ 1: 作戦ボード画面
+          TacticsBoardScreen(
+            whiteNumbers: selectedWhiteNumbers,
+            onOpenRosterPage: () {
+              _pageController.animateToPage(
+                1,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
+
+          // ページ 2: 選手登録＆5人選択画面
+          PlayerRosterScreen(
+            players: registeredPlayers,
+            onPlayersChanged: () {
+              setState(() {}); // 白チームの番号更新を全体に伝える
+            },
+            onBackToBoardPage: () {
+              _pageController.animateToPage(
+                0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 選手登録 ＆ 出場5人選択画面
+// ---------------------------------------------------------------------------
+class PlayerRosterScreen extends StatefulWidget {
+  final List<Player> players;
+  final VoidCallback onPlayersChanged;
+  final VoidCallback onBackToBoardPage;
+
+  const PlayerRosterScreen({
+    super.key,
+    required this.players,
+    required this.onPlayersChanged,
+    required this.onBackToBoardPage,
+  });
+
+  @override
+  State<PlayerRosterScreen> createState() => _PlayerRosterScreenState();
+}
+
+class _PlayerRosterScreenState extends State<PlayerRosterScreen> {
+  final _numberController = TextEditingController();
+  final _nameController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedCount = widget.players.where((p) => p.isSelected).length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('白チーム 選手管理 / 5人選択'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: widget.onBackToBoardPage,
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. 新規選手追加フォーム
+              const Text('新規選手追加',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 80,
+                    child: TextField(
+                      controller: _numberController,
+                      decoration: const InputDecoration(
+                        labelText: '背番号',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: '名前',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('追加'),
+                    onPressed: () {
+                      if (_numberController.text.trim().isNotEmpty) {
+                        setState(() {
+                          widget.players.add(Player(
+                            number: _numberController.text.trim(),
+                            name: _nameController.text.trim().isEmpty
+                                ? '選手'
+                                : _nameController.text.trim(),
+                          ));
+                        });
+                        _numberController.clear();
+                        _nameController.clear();
+                        widget.onPlayersChanged();
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const Divider(height: 32),
+
+              // 2. 出場メンバー選択ヘッダー
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('コート上に出す5人を選択',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(
+                    '$selectedCount / 5 人選択中',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: selectedCount == 5 ? Colors.green : Colors.orange,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // 3. 選手一覧リスト
+              Expanded(
+                child: ListView.builder(
+                  itemCount: widget.players.length,
+                  itemBuilder: (context, index) {
+                    final player = widget.players[index];
+                    return Card(
+                      color: player.isSelected
+                          ? Colors.orange.withAlpha(40)
+                          : Colors.grey[900],
+                      child: CheckboxListTile(
+                        title: Text('#${player.number} ${player.name}',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
+                        value: player.isSelected,
+                        activeColor: Colors.orange,
+                        onChanged: (bool? checked) {
+                          if (checked == true && selectedCount >= 5) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('選択できるのは最大5人までです'),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                            return;
+                          }
+
+                          setState(() {
+                            player.isSelected = checked ?? false;
+                          });
+                          widget.onPlayersChanged();
+                        },
+                        secondary: IconButton(
+                          icon: const Icon(Icons.delete,
+                              color: Colors.redAccent, size: 20),
+                          onPressed: () {
+                            setState(() {
+                              widget.players.removeAt(index);
+                            });
+                            widget.onPlayersChanged();
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              // 左へ戻る誘導
+              Center(
+                child: TextButton.icon(
+                  onPressed: widget.onBackToBoardPage,
+                  icon: const Icon(Icons.arrow_back, color: Colors.grey),
+                  label: const Text('← 左スライドで作戦ボードへ戻る',
+                      style: TextStyle(color: Colors.grey)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 作戦ボード画面
+// ---------------------------------------------------------------------------
 class PositionFrame {
   final Offset position;
   final double angle;
@@ -48,7 +317,7 @@ class PositionFrame {
 
 class BoardPiece {
   final String id;
-  final String label;
+  String label;
   final Color color;
   final bool isBall;
   final String imagePath;
@@ -133,7 +402,14 @@ class BoardPiece {
 }
 
 class TacticsBoardScreen extends StatefulWidget {
-  const TacticsBoardScreen({super.key});
+  final List<String> whiteNumbers;
+  final VoidCallback onOpenRosterPage;
+
+  const TacticsBoardScreen({
+    super.key,
+    required this.whiteNumbers,
+    required this.onOpenRosterPage,
+  });
 
   @override
   State<TacticsBoardScreen> createState() => _TacticsBoardScreenState();
@@ -161,16 +437,34 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     _setupDummyPositions();
   }
 
+  @override
+  void didUpdateWidget(covariant TacticsBoardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 選択された白チームの背番号が変わったらコマに反映
+    _applyWhiteNumbers();
+  }
+
+  void _applyWhiteNumbers() {
+    for (int i = 0; i < 5; i++) {
+      if (i < widget.whiteNumbers.length && i < pieces.length) {
+        pieces[i].label = widget.whiteNumbers[i];
+      }
+    }
+  }
+
   void _setupDummyPositions() {
     pieces.clear();
+    // 白チーム (0〜4番目)
     for (int i = 0; i < 5; i++) {
       pieces.add(BoardPiece(
           id: 'white_$i',
-          label: '${i + 1}',
+          label:
+              i < widget.whiteNumbers.length ? widget.whiteNumbers[i] : '${i + 1}',
           color: Colors.white,
           imagePath: 'assets/wheelchair_white.png',
           position: Offset.zero));
     }
+    // ボール (5番目)
     pieces.add(BoardPiece(
         id: 'ball',
         label: '',
@@ -178,6 +472,7 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
         isBall: true,
         imagePath: '',
         position: Offset.zero));
+    // 黒チーム (6〜10番目)
     for (int i = 0; i < 5; i++) {
       pieces.add(BoardPiece(
           id: 'black_$i',
@@ -215,6 +510,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     pieces[5].angle = 0.0;
     pieces[5].phaseTrails.clear();
     pieces[5].isRecordedInPhase.clear();
+
+    _applyWhiteNumbers();
   }
 
   void _resetToDefaultPositions(double courtWidth, double courtHeight) {
@@ -287,13 +584,18 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     if (!isInitialPositionSaved || history.isEmpty) return;
     setState(() => isPlaying = true);
 
+    // 1. 初期位置データ（Phase 0）を読み込む
     if (history.containsKey(0)) {
       setState(() {
         pieces = history[0]!.map((p) => p.clone()).toList();
+        
+        // ★【追加】現在チェックボックスで選択中の5人がいれば、再生時の背番号を上書きする
+        _applySelectedWhiteNumbersIfAvailable();
       });
       await Future.delayed(const Duration(milliseconds: 300));
     }
 
+    // 2. 各フェーズの再生アニメーション
     for (int phase = 1; phase <= 8; phase++) {
       if (history.containsKey(phase)) {
         if (!mounted) return;
@@ -313,6 +615,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                 pieces[i].angle = trail[step].angle;
               }
             }
+            // ★【追加】再生中の各ステップでも白チームの背番号を維持する
+            _applySelectedWhiteNumbersIfAvailable();
           });
           await Future.delayed(Duration(milliseconds: playbackSpeedMs));
         }
@@ -324,7 +628,19 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     setState(() => isPlaying = false);
   }
 
-  // --- 本体ストレージへの永久保存機能 ---
+  // ★【追加】チェックされた選手が5人いる場合のみ、白チームのコマの番号を選択中の番号に差し替えるヘルパー
+  void _applySelectedWhiteNumbersIfAvailable() {
+    // もし親から渡された widget.whiteNumbers が有効なデータ（5人分）であれば上書き
+    if (widget.whiteNumbers.length == 5) {
+      for (int i = 0; i < 5; i++) {
+        if (i < pieces.length) {
+          pieces[i].label = widget.whiteNumbers[i];
+        }
+      }
+    }
+  }
+
+  // ストレージ保存
   Future<void> _showSaveDialog() async {
     if (history.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -375,9 +691,9 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
       };
 
       await prefs.setString('formation_$name', jsonEncode(exportData));
-      
-      // 保存済み名の一覧を更新
-      List<String> savedList = prefs.getStringList('saved_formations_list') ?? [];
+
+      List<String> savedList =
+          prefs.getStringList('saved_formations_list') ?? [];
       if (!savedList.contains(name)) {
         savedList.add(name);
         await prefs.setStringList('saved_formations_list', savedList);
@@ -399,18 +715,11 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
     }
   }
 
-  // --- 保存済みフォーメーションの読み込み機能 ---
+  // 呼び出し＆共有一覧
   Future<void> _showLoadDialog() async {
     final prefs = await SharedPreferences.getInstance();
-    List<String> savedList = prefs.getStringList('saved_formations_list') ?? [];
-
-    if (savedList.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('保存されているフォーメーションがありません')),
-      );
-      return;
-    }
+    List<String> savedList =
+        prefs.getStringList('saved_formations_list') ?? [];
 
     if (!mounted) return;
     await showDialog(
@@ -419,30 +728,49 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
         title: const Text('フォーメーション一覧'),
         content: SizedBox(
           width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: savedList.length,
-            itemBuilder: (context, index) {
-              final name = savedList[index];
-              return ListTile(
-                title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                  onPressed: () async {
-                    await prefs.remove('formation_$name');
-                    savedList.remove(name);
-                    await prefs.setStringList('saved_formations_list', savedList);
-                    Navigator.pop(context);
-                    _showLoadDialog(); // 再表示
+          child: savedList.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text('保存されているフォーメーションがありません'),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: savedList.length,
+                  itemBuilder: (context, index) {
+                    final name = savedList[index];
+                    return ListTile(
+                      title: Text(name,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.share,
+                                color: Colors.greenAccent),
+                            tooltip: 'LINE用にコードをコピー',
+                            onPressed: () => _exportFormationToClipboard(name),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline,
+                                color: Colors.redAccent),
+                            onPressed: () async {
+                              await prefs.remove('formation_$name');
+                              savedList.remove(name);
+                              await prefs.setStringList(
+                                  'saved_formations_list', savedList);
+                              Navigator.pop(context);
+                              _showLoadDialog();
+                            },
+                          ),
+                        ],
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _loadFormationFromStorage(name);
+                      },
+                    );
                   },
                 ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _loadFormationFromStorage(name);
-                },
-              );
-            },
-          ),
         ),
         actions: [
           TextButton(
@@ -452,6 +780,132 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _exportFormationToClipboard(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonString = prefs.getString('formation_$name');
+      if (jsonString == null) return;
+
+      final base64Code = base64Encode(utf8.encode(jsonString));
+      await Clipboard.setData(ClipboardData(text: base64Code));
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('📋 「$name」の共有コードをコピーしました！LINEに貼り付けて送ってください'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('共有エラー: $e')),
+      );
+    }
+  }
+
+  // LINE取込
+  Future<void> _showImportDialog() async {
+    final controller = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('LINEから作戦を取り込む'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'LINE等で送られてきた共有コードを下に貼り付けて「取り込む」を押してください。',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'ここにコードを貼り付け...',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.pop(context);
+                await _importFormationFromCode(text);
+              }
+            },
+            child: const Text('取り込む'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _importFormationFromCode(String code) async {
+    try {
+      final decodedJsonString = utf8.decode(base64Decode(code));
+      final decoded = jsonDecode(decodedJsonString) as Map<String, dynamic>;
+
+      final String name = decoded['name'] ?? '取り込み作戦';
+      final historyData = decoded['history'] as Map<String, dynamic>;
+
+      final prefs = await SharedPreferences.getInstance();
+
+      String finalName = name;
+      List<String> savedList =
+          prefs.getStringList('saved_formations_list') ?? [];
+      int count = 1;
+      while (savedList.contains(finalName)) {
+        finalName = '$name($count)';
+        count++;
+      }
+      decoded['name'] = finalName;
+
+      await prefs.setString('formation_$finalName', jsonEncode(decoded));
+      savedList.add(finalName);
+      await prefs.setStringList('saved_formations_list', savedList);
+
+      setState(() {
+        history.clear();
+        isInitialPositionSaved = decoded['isInitialPositionSaved'] ?? false;
+        currentFormationName = finalName;
+
+        historyData.forEach((key, value) {
+          final phaseKey = int.parse(key);
+          final pieceList = (value as List)
+              .map((e) => BoardPiece.fromJson(e as Map<String, dynamic>))
+              .toList();
+          history[phaseKey] = pieceList;
+        });
+
+        if (history.containsKey(0)) {
+          pieces = history[0]!.map((p) => p.clone()).toList();
+        } else if (history.containsKey(1)) {
+          pieces = history[1]!.map((p) => p.clone()).toList();
+        }
+        currentPhase = 1;
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('📥 「$finalName」を取り込んで表示しました！')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('⚠️ コードが無効か、取り込みに失敗しました')),
+      );
+    }
   }
 
   Future<void> _loadFormationFromStorage(String name) async {
@@ -511,15 +965,24 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
           children: [
             const Text(
               'Wheelchair Basketball Tactics Board',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             if (currentFormationName.isNotEmpty)
               Text(
                 '作戦名: $currentFormationName',
-                style: const TextStyle(fontSize: 12, color: Colors.orangeAccent),
+                style: const TextStyle(
+                    fontSize: 11, color: Colors.orangeAccent),
               ),
           ],
         ),
+        actions: [
+          // 選手登録画面への移動ボタン
+          IconButton(
+            icon: const Icon(Icons.people, color: Colors.orangeAccent),
+            tooltip: '選手管理 / 出場5人選択',
+            onPressed: widget.onOpenRosterPage,
+          ),
+        ],
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -635,43 +1098,57 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                       const SizedBox(height: 6),
                       Wrap(
                         alignment: WrapAlignment.center,
-                        spacing: 12.0,
+                        spacing: 8.0,
+                        runSpacing: 4.0,
                         children: [
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 14)),
-                            onPressed:
-                                isPlaying || isRecording ? null : _showSaveDialog,
+                                    horizontal: 10)),
+                            onPressed: isPlaying || isRecording
+                                ? null
+                                : _showSaveDialog,
                             icon: const Icon(Icons.save, size: 16),
-                            label:
-                                const Text('名前をつけて保存', style: TextStyle(fontSize: 12)),
+                            label: const Text('保存',
+                                style: TextStyle(fontSize: 12)),
                           ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.teal,
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 14)),
+                                    horizontal: 10)),
                             onPressed: isPlaying || isRecording
                                 ? null
                                 : _showLoadDialog,
                             icon: const Icon(Icons.folder_open, size: 16),
-                            label:
-                                const Text('呼び出し', style: TextStyle(fontSize: 12)),
+                            label: const Text('一覧/共有',
+                                style: TextStyle(fontSize: 12)),
+                          ),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.purple,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10)),
+                            onPressed: isPlaying || isRecording
+                                ? null
+                                : _showImportDialog,
+                            icon: const Icon(Icons.input, size: 16),
+                            label: const Text('LINEから取込',
+                                style: TextStyle(fontSize: 12)),
                           ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.red[900],
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 14)),
+                                    horizontal: 10)),
                             onPressed: isPlaying
                                 ? null
                                 : () => _clearAllDataAndReset(
                                     courtWidth, courtHeight),
                             icon: const Icon(Icons.refresh, size: 16),
-                            label:
-                                const Text('リセット', style: TextStyle(fontSize: 12)),
+                            label: const Text('リセット',
+                                style: TextStyle(fontSize: 12)),
                           ),
                         ],
                       ),
@@ -701,8 +1178,8 @@ class _TacticsBoardScreenState extends State<TacticsBoardScreen> {
                                     color: const Color(0xFF1E3A1E),
                                     child: const Center(
                                         child: Text('ハーフコート画像が見つかりません',
-                                            style:
-                                                TextStyle(color: Colors.grey))),
+                                            style: TextStyle(
+                                                color: Colors.grey))),
                                   );
                                 },
                               ),
